@@ -303,12 +303,18 @@ def draw_motor(geom):
                     bordercolor="#30363d", borderwidth=1),
     )
 
+    def hex_to_rgba(hex_color, alpha=0.15):
+        """Convert #RRGGBB to rgba(r,g,b,alpha) string for Plotly."""
+        h = hex_color.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"rgba({r},{g},{b},{alpha})"
+
     def circle_trace(r, color, fill, name, lw=1.5, dash="solid"):
         theta = np.linspace(0, 2 * np.pi, 200)
         x = r * np.cos(theta); y = r * np.sin(theta)
         return go.Scatter(x=list(x)+[None], y=list(y)+[None],
                           mode="lines", line=dict(color=color, width=lw, dash=dash),
-                          fill=fill, fillcolor=color.replace(")", ",0.15)").replace("rgb","rgba") if "rgb" in color else color+"22",
+                          fill=fill, fillcolor=hex_to_rgba(color, 0.15),
                           name=name, showlegend=True)
 
     rSO = geom["stator_od"] / 2
