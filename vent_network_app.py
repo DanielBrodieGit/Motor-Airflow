@@ -287,134 +287,309 @@ def draw_circuit(results_map=None):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2D Motor Cross-section (Plotly)
+# SVG Motor Diagrams
 # ─────────────────────────────────────────────────────────────────────────────
-def draw_motor(geom):
-    fig = go.Figure()
-    fig.update_layout(
-        paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
-        height=420, showlegend=True,
-        margin=dict(l=10, r=10, t=40, b=10),
-        xaxis=dict(showgrid=False, zeroline=False, visible=False,
-                   range=[-0.35, 0.35], scaleanchor="y", scaleratio=1),
-        yaxis=dict(showgrid=False, zeroline=False, visible=False, range=[-0.35, 0.35]),
-        title=dict(text="Motor End View", font=dict(color="#8b949e", size=13), x=0.01),
-        legend=dict(font=dict(color="#8b949e", size=11), bgcolor="#161b22",
-                    bordercolor="#30363d", borderwidth=1),
+
+def svg_annulus(cx, cy, r_outer, r_inner, fill, stroke, stroke_width=1.5, hatch_id=None):
+    """SVG donut shape using clip-path approach."""
+    fill_attr = f"url(#{hatch_id})" if hatch_id else fill
+    return (
+        f'<circle cx="{cx}" cy="{cy}" r="{r_outer}" '
+        f'fill="{fill_attr}" stroke="{stroke}" stroke-width="{stroke_width}"/>'
+        f'<circle cx="{cx}" cy="{cy}" r="{r_inner}" '
+        f'fill="#161b22" stroke="{stroke}" stroke-width="{stroke_width}"/>'
     )
 
-    def hex_to_rgba(hex_color, alpha=0.15):
-        """Convert #RRGGBB to rgba(r,g,b,alpha) string for Plotly."""
-        h = hex_color.lstrip("#")
-        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-        return f"rgba({r},{g},{b},{alpha})"
 
-    def circle_trace(r, color, fill, name, lw=1.5, dash="solid"):
-        theta = np.linspace(0, 2 * np.pi, 200)
-        x = r * np.cos(theta); y = r * np.sin(theta)
-        return go.Scatter(x=list(x)+[None], y=list(y)+[None],
-                          mode="lines", line=dict(color=color, width=lw, dash=dash),
-                          fill=fill, fillcolor=hex_to_rgba(color, 0.15),
-                          name=name, showlegend=True)
+def make_motor_svg(geom):
+    """
+    Generate a side-by-side SVG:  left = end view,  right = axial half-section.
+    All coordinates are in SVG pixels; geometry is scaled to fit.
+    """
+    W, H = 900, 420
+    PAD  = 20
 
-    rSO = geom["stator_od"] / 2
-    rSI = geom["stator_id"] / 2
-    rRO = geom["rotor_od"]  / 2
-    rRI = geom["rotor_id"]  / 2
+    # ── Geometry ────────────────────────────────────────────────────────
+    rSO = geom["stator_od"]  / 2
+    rSI = geom["stator_id"]  / 2
+    rRO = geom["rotor_od"]   / 2
+    rRI = geom["rotor_id"]   / 2
+    L   = geom["active_length"]
+    nSV = int(geom["n_stator_vents"])
+    nRV = int(geom["n_rotor_vents"])
 
-    fig.add_trace(circle_trace(rSO, "#607080", "toself",  "Stator frame", lw=2))
-    fig.add_trace(circle_trace(rSI, "#8b949e", "toself",  "Stator bore",  lw=1))
-    fig.add_trace(circle_trace(rRO, "#4a9eff", "toself",  "Rotor OD",     lw=2))
-    fig.add_trace(circle_trace(rRI, "#30363d", "toself",  "Shaft/spider", lw=1))
+    airgap_mm   = (rSI - rRO) * 1000
+    frame_t_mm  = (rSO - rSI) * 1000
+    rotor_t_mm  = (rRO - rRI) * 1000
 
-    # Stator vent slots
-    nSV = geom["n_stator_vents"]
+    # ── END VIEW (left panel: x 0..W/2) ────────────────────────────────
+    ev_cx  = W * 0.25
+    ev_cy  = H * 0.50
+    ev_pad = min(W * 0.22, H * 0.42)
+    scale  = ev_pad / rSO          # px per metre
+
+    pxSO = rSO * scale
+    pxSI = rSI * scale
+    pxRO = rRO * scale
+    pxRI = rRI * scale
+
+    # Hatch pattern for stator steel
+    hatch = """
+    <defs>
+      <pattern id="steel_hatch" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
+        <line x1="0" y1="0" x2="0" y2="6" stroke="#3a4a5a" stroke-width="1.5"/>
+      </pattern>
+      <pattern id="rotor_hatch" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(-45)">
+        <line x1="0" y1="0" x2="0" y2="6" stroke="#1a3050" stroke-width="1.5"/>
+      </pattern>
+      <filter id="glow">
+        <feGaussianBlur stdDeviation="2" result="blur"/>
+        <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>"""
+
+    ev_elements = []
+
+    # Stator frame (hatched steel)
+    ev_elements.append(
+        f'<circle cx="{ev_cx}" cy="{ev_cy}" r="{pxSO}" fill="url(#steel_hatch)" stroke="#607080" stroke-width="2"/>'
+        f'<circle cx="{ev_cx}" cy="{ev_cy}" r="{pxSI}" fill="#161b22" stroke="#607080" stroke-width="1.5"/>'
+    )
+
+    # Airgap fill
+    ev_elements.append(
+        f'<circle cx="{ev_cx}" cy="{ev_cy}" r="{pxSI}" fill="rgba(47,129,247,0.08)" stroke="none"/>'
+        f'<circle cx="{ev_cx}" cy="{ev_cy}" r="{pxRO}" fill="#161b22" stroke="none"/>'
+    )
+
+    # Rotor (hatched, different angle)
+    ev_elements.append(
+        f'<circle cx="{ev_cx}" cy="{ev_cy}" r="{pxRO}" fill="url(#rotor_hatch)" stroke="#4a9eff" stroke-width="2"/>'
+        f'<circle cx="{ev_cx}" cy="{ev_cy}" r="{pxRI}" fill="#0d1520" stroke="#30363d" stroke-width="1.5"/>'
+    )
+
+    # Shaft solid
+    ev_elements.append(
+        f'<circle cx="{ev_cx}" cy="{ev_cy}" r="{pxRI}" fill="#0a1020" stroke="#484f58" stroke-width="1"/>'
+    )
+
+    # Stator vent slots — filled rectangles at each slot position
+    sv_w_px = max(3, geom["stator_vent_w"] * scale * 0.8) if "stator_vent_w" in geom else max(3, (pxSO - pxSI) * 0.25)
     for i in range(nSV):
-        ang = i / nSV * 2 * np.pi
-        x0 = rSI * math.cos(ang); y0 = rSI * math.sin(ang)
-        x1 = rSO * math.cos(ang); y1 = rSO * math.sin(ang)
-        fig.add_trace(go.Scatter(x=[x0, x1], y=[y0, y1],
-                                 mode="lines", line=dict(color="#2f81f7", width=3),
-                                 showlegend=(i == 0), name="Stator vents",
-                                 hoverinfo="skip"))
+        ang = i / nSV * 2 * math.pi - math.pi / 2
+        # Line from stator bore to OD
+        x0 = ev_cx + pxSI * math.cos(ang)
+        y0 = ev_cy + pxSI * math.sin(ang)
+        x1 = ev_cx + pxSO * math.cos(ang)
+        y1 = ev_cy + pxSO * math.sin(ang)
+        ev_elements.append(
+            f'<line x1="{x0:.1f}" y1="{y0:.1f}" x2="{x1:.1f}" y2="{y1:.1f}" '
+            f'stroke="#2f81f7" stroke-width="{sv_w_px:.1f}" stroke-linecap="round"/>'
+        )
 
-    # Rotor vent slots
-    nRV = geom["n_rotor_vents"]
+    # Rotor vent channels
+    rv_w_px = max(2, (pxRO - pxRI) * 0.22)
     for i in range(nRV):
-        ang = (i + 0.5) / nRV * 2 * np.pi
-        x0 = rRI * math.cos(ang); y0 = rRI * math.sin(ang)
-        x1 = rRO * math.cos(ang); y1 = rRO * math.sin(ang)
-        fig.add_trace(go.Scatter(x=[x0, x1], y=[y0, y1],
-                                 mode="lines", line=dict(color="#3fb950", width=2),
-                                 showlegend=(i == 0), name="Rotor vents",
-                                 hoverinfo="skip"))
+        ang = (i + 0.5) / nRV * 2 * math.pi - math.pi / 2
+        x0 = ev_cx + pxRI * math.cos(ang)
+        y0 = ev_cy + pxRI * math.sin(ang)
+        x1 = ev_cx + pxRO * math.cos(ang)
+        y1 = ev_cy + pxRO * math.sin(ang)
+        ev_elements.append(
+            f'<line x1="{x0:.1f}" y1="{y0:.1f}" x2="{x1:.1f}" y2="{y1:.1f}" '
+            f'stroke="#3fb950" stroke-width="{rv_w_px:.1f}" stroke-linecap="round"/>'
+        )
 
-    # Airgap annotation
-    fig.add_annotation(x=0, y=(rSI + rRO) / 2,
-                       text=f"Airgap {(rSI-rRO)*1000:.1f} mm",
-                       font=dict(color="#2f81f7", size=10),
-                       showarrow=False)
-    return fig
-
-
-def draw_axial(geom):
-    """Axial half-section using Plotly shapes."""
-    L     = geom["active_length"]
-    rSO   = geom["stator_od"] / 2
-    rSI   = geom["stator_id"] / 2
-    rRO   = geom["rotor_od"]  / 2
-    rRI   = geom["rotor_id"]  / 2
-
-    fig = go.Figure()
-    fig.update_layout(
-        paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
-        height=300, showlegend=False,
-        margin=dict(l=60, r=30, t=40, b=40),
-        xaxis=dict(title="Axial position (m)", range=[-0.05, L + 0.05],
-                   gridcolor="#1c2330", color="#8b949e"),
-        yaxis=dict(title="Radius (m)", range=[0, rSO * 1.1],
-                   gridcolor="#1c2330", color="#8b949e", scaleanchor="x", scaleratio=1),
-        title=dict(text="Axial Half-Section", font=dict(color="#8b949e", size=13), x=0.01),
+    # Airgap dimension line (horizontal, right side)
+    dim_x  = ev_cx + (pxSI + pxRO) / 2
+    dim_y1 = ev_cy - 8
+    dim_y2 = ev_cy + 8
+    ev_elements.append(
+        f'<line x1="{ev_cx + pxRO:.1f}" y1="{ev_cy:.1f}" x2="{ev_cx + pxSI:.1f}" y2="{ev_cy:.1f}" '
+        f'stroke="#2f81f7" stroke-width="1" stroke-dasharray="3,2"/>'
+        f'<text x="{ev_cx + (pxSI+pxRO)/2:.1f}" y="{ev_cy - 6:.1f}" '
+        f'fill="#2f81f7" font-size="10" text-anchor="middle" font-family="monospace">'
+        f'δ={airgap_mm:.1f}mm</text>'
     )
 
-    # Layer rectangles [y_inner, y_outer, color, name]
-    layers = [
-        (rSI, rSO, "rgba(96,112,128,0.4)",  "Stator frame"),
-        (rRO, rSI, "rgba(47,129,247,0.10)", "Airgap"),
-        (rRI, rRO, "rgba(74,158,255,0.25)", "Rotor"),
-        (0,   rRI, "rgba(20,30,40,0.8)",    "Shaft"),
+    # Labels around perimeter
+    lbl_r = pxSO + 18
+    ev_elements.append(
+        f'<text x="{ev_cx}" y="{ev_cy - lbl_r:.1f}" fill="#8b949e" font-size="11" '
+        f'text-anchor="middle" font-family="monospace">Stator frame  t={frame_t_mm:.0f}mm</text>'
+        f'<text x="{ev_cx + pxRO * 0.7:.1f}" y="{ev_cy + pxRO * 0.7:.1f}" '
+        f'fill="#4a9eff" font-size="10" font-family="monospace">Rotor  t={rotor_t_mm:.0f}mm</text>'
+        f'<text x="{ev_cx - 6:.1f}" y="{ev_cy + 4:.1f}" fill="#484f58" font-size="9" '
+        f'text-anchor="middle" font-family="monospace">Shaft</text>'
+    )
+
+    # Title
+    ev_elements.append(
+        f'<text x="{ev_cx}" y="18" fill="#e6edf3" font-size="13" font-weight="bold" '
+        f'text-anchor="middle" font-family="monospace" letter-spacing="1">END VIEW</text>'
+        f'<text x="{ev_cx}" y="32" fill="#8b949e" font-size="10" '
+        f'text-anchor="middle" font-family="monospace">OD={geom["stator_od"]*1000:.0f}mm  '
+        f'Bore={geom["stator_id"]*1000:.0f}mm  Rotor={geom["rotor_od"]*1000:.0f}mm</text>'
+    )
+
+    # ── AXIAL HALF-SECTION (right panel: x W/2..W) ────────────────────
+    ax_x0  = W * 0.52
+    ax_x1  = W - PAD
+    ax_w   = ax_x1 - ax_x0
+    ax_cy  = H * 0.50
+    ax_lbl = 54   # left label margin inside panel
+
+    # Scale so statorOD fits in 80% of half-height
+    ax_scale = (H * 0.38) / rSO   # px per metre (radial)
+    # Axial scale: fit L into available width minus label margin
+    l_scale  = (ax_w - ax_lbl - 30) / L
+
+    lx0 = ax_x0 + ax_lbl          # left edge of active length
+    lx1 = lx0 + L * l_scale       # right edge
+
+    ax_pxSO = rSO * ax_scale
+    ax_pxSI = rSI * ax_scale
+    ax_pxRO = rRO * ax_scale
+    ax_pxRI = rRI * ax_scale
+
+    ax = []
+
+    def rect(x0, y0, w, h, fill, stroke="#30363d", sw=1):
+        return (f'<rect x="{x0:.1f}" y="{y0:.1f}" width="{w:.1f}" height="{h:.1f}" '
+                f'fill="{fill}" stroke="{stroke}" stroke-width="{sw}"/>')
+
+    # Stator frame — upper and lower
+    ax.append(rect(lx0, ax_cy - ax_pxSO, L * l_scale, ax_pxSO - ax_pxSI, "url(#steel_hatch)", "#607080", 1.5))
+    ax.append(rect(lx0, ax_cy + ax_pxSI, L * l_scale, ax_pxSO - ax_pxSI, "url(#steel_hatch)", "#607080", 1.5))
+
+    # Airgap
+    ax.append(rect(lx0, ax_cy - ax_pxSI, L * l_scale, ax_pxSI - ax_pxRO, "rgba(47,129,247,0.10)", "none"))
+    ax.append(rect(lx0, ax_cy + ax_pxRO, L * l_scale, ax_pxSI - ax_pxRO, "rgba(47,129,247,0.10)", "none"))
+
+    # Rotor
+    ax.append(rect(lx0, ax_cy - ax_pxRO, L * l_scale, ax_pxRO - ax_pxRI, "url(#rotor_hatch)", "#4a9eff", 1.5))
+    ax.append(rect(lx0, ax_cy + ax_pxRI, L * l_scale, ax_pxRO - ax_pxRI, "url(#rotor_hatch)", "#4a9eff", 1.5))
+
+    # Shaft (extends beyond active length)
+    shaft_ext = 20
+    ax.append(rect(lx0 - shaft_ext, ax_cy - ax_pxRI, L * l_scale + shaft_ext * 2,
+                   ax_pxRI * 2, "#0a1020", "#484f58", 1))
+
+    # End-cap mesh inlet symbols (left end)
+    for dy in [-ax_pxSI * 0.6, -ax_pxSI * 0.2, ax_pxSI * 0.2, ax_pxSI * 0.6]:
+        ax.append(f'<line x1="{lx0 - 12:.1f}" y1="{ax_cy + dy:.1f}" x2="{lx0:.1f}" y2="{ax_cy + dy:.1f}" '
+                  f'stroke="#3fb950" stroke-width="2" stroke-dasharray="4,2"/>')
+    ax.append(f'<text x="{lx0 - 14:.1f}" y="{ax_cy - ax_pxSI - 6:.1f}" fill="#3fb950" '
+              f'font-size="10" text-anchor="middle" font-family="monospace">INLET</text>')
+
+    # Airgap axial flow arrow (mid airgap, left to right, stops at 60%)
+    y_ag = ax_cy - (ax_pxSI + ax_pxRO) / 2
+    arr_x1 = lx0 + L * l_scale * 0.62
+    ax.append(
+        f'<defs><marker id="arr_blue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">'
+        f'<polygon points="0 0, 8 3, 0 6" fill="#2f81f7"/></marker>'
+        f'<marker id="arr_green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">'
+        f'<polygon points="0 0, 8 3, 0 6" fill="#3fb950"/></marker>'
+        f'<marker id="arr_amber" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">'
+        f'<polygon points="0 0, 8 3, 0 6" fill="#d29922"/></marker></defs>'
+        f'<line x1="{lx0:.1f}" y1="{y_ag:.1f}" x2="{arr_x1:.1f}" y2="{y_ag:.1f}" '
+        f'stroke="#2f81f7" stroke-width="2" marker-end="url(#arr_blue)"/>'
+        f'<text x="{(lx0 + arr_x1)/2:.1f}" y="{y_ag - 5:.1f}" fill="#2f81f7" '
+        f'font-size="10" text-anchor="middle" font-family="monospace">axial flow</text>'
+    )
+    # Mirror for lower airgap
+    y_ag_lo = ax_cy + (ax_pxSI + ax_pxRO) / 2
+    ax.append(
+        f'<line x1="{lx0:.1f}" y1="{y_ag_lo:.1f}" x2="{arr_x1:.1f}" y2="{y_ag_lo:.1f}" '
+        f'stroke="#2f81f7" stroke-width="2" marker-end="url(#arr_blue)"/>'
+    )
+
+    # Stator radial vent exit arrows — 3 representative packets
+    n_shown = min(3, nSV)
+    for i in range(n_shown):
+        xv = lx0 + L * l_scale * (i + 1) / (n_shown + 1)
+        # Upper
+        ax.append(
+            f'<line x1="{xv:.1f}" y1="{ax_cy - ax_pxSI:.1f}" x2="{xv:.1f}" y2="{ax_cy - ax_pxSO - 2:.1f}" '
+            f'stroke="#3fb950" stroke-width="2" stroke-dasharray="4,2" marker-end="url(#arr_green)"/>'
+        )
+        # Lower
+        ax.append(
+            f'<line x1="{xv:.1f}" y1="{ax_cy + ax_pxSI:.1f}" x2="{xv:.1f}" y2="{ax_cy + ax_pxSO + 2:.1f}" '
+            f'stroke="#3fb950" stroke-width="2" stroke-dasharray="4,2" marker-end="url(#arr_green)"/>'
+        )
+
+    # Outlet label (top, mid-axial)
+    ax.append(
+        f'<text x="{(lx0 + lx1)/2:.1f}" y="{ax_cy - ax_pxSO - 12:.1f}" fill="#d29922" '
+        f'font-size="10" text-anchor="middle" font-family="monospace">OUTLET (mid stator)</text>'
+    )
+
+    # Dimension line for active length
+    dim_y = ax_cy + ax_pxSO + 22
+    ax.append(
+        f'<line x1="{lx0:.1f}" y1="{dim_y:.1f}" x2="{lx1:.1f}" y2="{dim_y:.1f}" '
+        f'stroke="#484f58" stroke-width="1"/>'
+        f'<line x1="{lx0:.1f}" y1="{dim_y - 5:.1f}" x2="{lx0:.1f}" y2="{dim_y + 5:.1f}" stroke="#484f58" stroke-width="1"/>'
+        f'<line x1="{lx1:.1f}" y1="{dim_y - 5:.1f}" x2="{lx1:.1f}" y2="{dim_y + 5:.1f}" stroke="#484f58" stroke-width="1"/>'
+        f'<text x="{(lx0+lx1)/2:.1f}" y="{dim_y + 14:.1f}" fill="#484f58" font-size="10" '
+        f'text-anchor="middle" font-family="monospace">L = {L*1000:.0f} mm</text>'
+    )
+
+    # Radius dimension lines (right side)
+    rx = lx1 + 8
+    for label, px_r, col in [
+        (f"rSO={rSO*1000:.0f}", ax_pxSO, "#607080"),
+        (f"rSI={rSI*1000:.0f}", ax_pxSI, "#8b949e"),
+        (f"rRO={rRO*1000:.0f}", ax_pxRO, "#4a9eff"),
+        (f"rRI={rRI*1000:.0f}", ax_pxRI, "#484f58"),
+    ]:
+        ax.append(
+            f'<line x1="{lx1:.1f}" y1="{ax_cy - px_r:.1f}" x2="{rx + 4:.1f}" y2="{ax_cy - px_r:.1f}" '
+            f'stroke="{col}" stroke-width="1" stroke-dasharray="3,2"/>'
+            f'<text x="{rx + 6:.1f}" y="{ax_cy - px_r + 4:.1f}" fill="{col}" '
+            f'font-size="9" font-family="monospace">{label}mm</text>'
+        )
+
+    # Section title
+    ax.append(
+        f'<text x="{(lx0 + lx1)/2:.1f}" y="18" fill="#e6edf3" font-size="13" font-weight="bold" '
+        f'text-anchor="middle" font-family="monospace" letter-spacing="1">AXIAL HALF-SECTION</text>'
+        f'<text x="{(lx0 + lx1)/2:.1f}" y="32" fill="#8b949e" font-size="10" '
+        f'text-anchor="middle" font-family="monospace">(symmetry about shaft centreline)</text>'
+    )
+
+    # ── Legend ─────────────────────────────────────────────────────────
+    legend_items = [
+        ("#607080", "Stator frame (steel)"),
+        ("#4a9eff", "Rotor body"),
+        ("#2f81f7", "Stator vent / airgap flow"),
+        ("#3fb950", "Rotor vents / radial exit"),
+        ("#484f58", "Shaft"),
     ]
-    for y0, y1, col, name in layers:
-        fig.add_shape(type="rect", x0=0, x1=L, y0=y0, y1=y1,
-                      fillcolor=col, line=dict(color="#30363d", width=1))
-        fig.add_annotation(x=-0.02, y=(y0 + y1) / 2, text=name,
-                           font=dict(color="#8b949e", size=9),
-                           showarrow=False, xanchor="right")
+    legend_y = H - 18
+    lx = PAD
+    legend_svg = []
+    for col, lbl in legend_items:
+        legend_svg.append(
+            f'<rect x="{lx}" y="{legend_y - 9}" width="12" height="10" fill="{col}" rx="2"/>'
+            f'<text x="{lx + 16}" y="{legend_y}" fill="#8b949e" font-size="10" font-family="monospace">{lbl}</text>'
+        )
+        lx += len(lbl) * 6.5 + 28
 
-    # Airgap flow arrow
-    y_ag = (rSI + rRO) / 2
-    fig.add_annotation(x=L * 0.6, y=y_ag, ax=0.02, ay=y_ag,
-                       xref="x", yref="y", axref="x", ayref="y",
-                       showarrow=True, arrowhead=2, arrowcolor="#2f81f7", arrowwidth=2,
-                       text="Axial flow", font=dict(color="#2f81f7", size=10))
+    # ── Divider line ───────────────────────────────────────────────────
+    divider = f'<line x1="{W*0.50}" y1="40" x2="{W*0.50}" y2="{H - 28}" stroke="#30363d" stroke-width="1" stroke-dasharray="4,4"/>'
 
-    # Stator vent exit arrows (upward through stator at ~L/3 & 2L/3)
-    for xv in [L / 3, 2 * L / 3]:
-        fig.add_annotation(x=xv, y=rSO, ax=xv, ay=rSI,
-                           xref="x", yref="y", axref="x", ayref="y",
-                           showarrow=True, arrowhead=2, arrowcolor="#3fb950", arrowwidth=2,
-                           text="", )
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}"
+         style="background:#161b22; border-radius:8px; border:1px solid #30363d; display:block; max-width:100%;">
+      {hatch}
+      {''.join(ev_elements)}
+      {divider}
+      {''.join(ax)}
+      {''.join(legend_svg)}
+    </svg>"""
 
-    fig.add_annotation(x=L / 2, y=rSO * 1.05, text="Radial vent exit →",
-                       font=dict(color="#3fb950", size=10), showarrow=False)
-
-    # Inlet / outlet labels
-    fig.add_annotation(x=0, y=rSI, text="INLET", font=dict(color="#3fb950", size=10, family="monospace"),
-                       showarrow=False, yshift=6)
-    fig.add_annotation(x=L, y=rSO, text="OUTLET", font=dict(color="#d29922", size=10, family="monospace"),
-                       showarrow=False, yshift=8)
-
-    return fig
+    return svg
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -707,11 +882,14 @@ def main():
 
     # ── MOTOR DIAGRAM ──────────────────────────────────────────────────
     with tab_motor:
-        d1, d2 = st.columns([1, 1])
-        with d1:
-            st.plotly_chart(draw_motor(geom), use_container_width=True)
-        with d2:
-            st.plotly_chart(draw_axial(geom), use_container_width=True)
+        import streamlit.components.v1 as components
+        geom_svg = {**geom, "stator_vent_w": st.session_state.branches.get("SV", {}).get("w", 0.010)}
+        svg_html = f"""
+        <div style="background:#161b22; padding:4px; border-radius:8px;">
+          {make_motor_svg(geom_svg)}
+        </div>
+        """
+        components.html(svg_html, height=445, scrolling=False)
 
         # Computed geometry
         airgap = (stator_id - rotor_od) / 2
@@ -726,10 +904,10 @@ def main():
         ]
         for col, (k, v) in zip(gcols, derived):
             with col:
-                st.markdown(f"""<div class="metric-box">
+                st.markdown(f'''<div class="metric-box">
                     <div class="metric-lbl">{k}</div>
                     <div class="metric-val">{v}</div>
-                </div>""", unsafe_allow_html=True)
+                </div>''', unsafe_allow_html=True)
 
     # ── THEORY ────────────────────────────────────────────────────────
     with tab_theory:
@@ -782,3 +960,4 @@ for every loop.
 
 if __name__ == "__main__":
     main()
+
